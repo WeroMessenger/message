@@ -1,0 +1,466 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// User Model
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  phone         String?   @unique
+  username      String    @unique
+  firstName     String?
+  lastName      String?
+  password      String
+  avatar        String?
+  bio           String?
+  status        String?   @default("Hey there! I'm using Message")
+  statusEmoji   String?
+  
+  // Authentication
+  emailVerified DateTime?
+  phoneVerified DateTime?
+  twoFAEnabled  Boolean   @default(false)
+  twoFASecret   String?
+  
+  // Profile
+  isOnline      Boolean   @default(false)
+  lastSeen      DateTime  @default(now())
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  // Relations
+  chats         Chat[]    @relation("ChatUser")
+  messages      Message[]
+  reactions     Reaction[]
+  groupMembers  GroupMember[]
+  channelMembers ChannelMember[]
+  blockedUsers  User[]    @relation("BlockedUsers")
+  blockedBy     User[]    @relation("BlockedUsers")
+  
+  // Subscriptions
+  premiumSubscription PremiumSubscription?
+  
+  // Notifications
+  deviceTokens  DeviceToken[]
+  notificationSettings NotificationSettings?
+  
+  // Files
+  uploadedFiles File[]
+  
+  // Stickers
+  favoriteStickerPacks StickerPack[] @relation("UserFavoriteStickerPacks")
+}
+
+// Chat (Direct Message or Group)
+model Chat {
+  id            String    @id @default(cuid())
+  name          String?
+  description   String?
+  avatar        String?
+  type          String    @default("direct") // direct, group, channel
+  isArchived    Boolean   @default(false)
+  isPinned      Boolean   @default(false)
+  lastMessage   String?
+  lastMessageAt DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  // Group/Channel specific
+  groupId       String?   @unique
+  channelId     String?   @unique
+  
+  // Relations
+  users         User[]    @relation("ChatUser")
+  messages      Message[]
+  group         Group?    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  channel       Channel?  @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  
+  @@index([groupId, channelId])
+}
+
+// Direct Message Participants
+model ChatUser {
+  id              String    @id @default(cuid())
+  chatId          String
+  userId          String
+  mutedUntil      DateTime?
+  notifyAll       Boolean   @default(true)
+  unreadCount     Int       @default(0)
+  lastReadAt      DateTime  @default(now())
+  
+  @@unique([chatId, userId])
+  @@index([chatId, userId])
+}
+
+// Message
+model Message {
+  id              String    @id @default(cuid())
+  chatId          String
+  senderId        String
+  content         String?
+  type            String    @default("text") // text, image, video, audio, voice, file, sticker, gif
+  isEdited        Boolean   @default(false)
+  isDeleted       Boolean   @default(false)
+  isPinned        Boolean   @default(false)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  deletedAt       DateTime?
+  
+  // Relations
+  chat            Chat      @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  sender          User      @relation(fields: [senderId], references: [id])
+  replyTo         Message?  @relation("MessageReply", fields: [replyToId], references: [id])
+  replyToId       String?
+  replies         Message[] @relation("MessageReply")
+  attachments     File[]
+  reactions       Reaction[]
+  forwards        Message[] @relation("MessageForward")
+  forwardedFrom   Message?  @relation("MessageForward", fields: [forwardedFromId], references: [id])
+  forwardedFromId String?
+  
+  @@index([chatId, senderId])
+  @@index([createdAt])
+}
+
+// Reaction to Message
+model Reaction {
+  id              String    @id @default(cuid())
+  messageId       String
+  userId          String
+  emoji           String    // ❤️, 👍, 👎, 🔥, 😂, 😍, 😎, 😭, 😡
+  createdAt       DateTime  @default(now())
+  
+  // Relations
+  message         Message   @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user            User      @relation(fields: [userId], references: [id])
+  
+  @@unique([messageId, userId, emoji])
+  @@index([messageId])
+}
+
+// File/Attachment
+model File {
+  id              String    @id @default(cuid())
+  messageId       String?
+  uploadedById    String
+  filename        String
+  originalName    String
+  mimeType        String
+  size            Int
+  url             String
+  thumbnailUrl    String?
+  path            String
+  duration        Int?      // For audio/video files
+  width           Int?      // For image/video files
+  height          Int?      // For image/video files
+  createdAt       DateTime  @default(now())
+  
+  // Relations
+  message         Message?  @relation(fields: [messageId], references: [id], onDelete: SetNull)
+  uploadedBy      User      @relation(fields: [uploadedById], references: [id])
+  
+  @@index([messageId, uploadedById])
+}
+
+// Group
+model Group {
+  id              String    @id @default(cuid())
+  name            String
+  description     String?
+  avatar          String?
+  inviteLink      String    @unique
+  createdBy       String
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  // Settings
+  maxMembers      Int       @default(200000)
+  isPublic        Boolean   @default(false)
+  allowMessagesFromNonMembers Boolean @default(false)
+  
+  // Relations
+  chat            Chat?
+  members         GroupMember[]
+  admins          GroupAdmin[]
+  moderators      GroupModerator[]
+  bannedUsers     BannedGroupMember[]
+  
+  @@index([createdBy])
+}
+
+// Group Member
+model GroupMember {
+  id              String    @id @default(cuid())
+  groupId         String
+  userId          String
+  joinedAt        DateTime  @default(now())
+  role            String    @default("member") // member, admin, moderator
+  
+  // Relations
+  group           Group     @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  admin           GroupAdmin?
+  moderator       GroupModerator?
+  
+  @@unique([groupId, userId])
+  @@index([groupId])
+}
+
+// Group Admin
+model GroupAdmin {
+  id              String    @id @default(cuid())
+  groupId         String
+  userId          String
+  memberId        String    @unique
+  permissions     String[]  @default(["manage_members", "manage_messages", "manage_settings"])
+  createdAt       DateTime  @default(now())
+  
+  // Relations
+  group           Group     @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  member          GroupMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  
+  @@unique([groupId, userId])
+}
+
+// Group Moderator
+model GroupModerator {
+  id              String    @id @default(cuid())
+  groupId         String
+  userId          String
+  memberId        String    @unique
+  permissions     String[]  @default(["manage_messages"])
+  createdAt       DateTime  @default(now())
+  
+  // Relations
+  group           Group     @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  member          GroupMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  
+  @@unique([groupId, userId])
+}
+
+// Banned Group Member
+model BannedGroupMember {
+  id              String    @id @default(cuid())
+  groupId         String
+  userId          String
+  bannedAt        DateTime  @default(now())
+  bannedBy        String
+  reason          String?
+  
+  // Relations
+  group           Group     @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  
+  @@unique([groupId, userId])
+}
+
+// Channel
+model Channel {
+  id              String    @id @default(cuid())
+  name            String
+  description     String?
+  avatar          String?
+  username        String    @unique
+  createdBy       String
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  // Settings
+  isPublic        Boolean   @default(true)
+  commentsEnabled Boolean   @default(true)
+  pinnedMessage   String?
+  
+  // Statistics
+  subscriberCount Int       @default(0)
+  viewCount       Int       @default(0)
+  
+  // Relations
+  chat            Chat?
+  members         ChannelMember[]
+  
+  @@index([createdBy])
+}
+
+// Channel Member/Subscriber
+model ChannelMember {
+  id              String    @id @default(cuid())
+  channelId       String
+  userId          String
+  subscribedAt    DateTime  @default(now())
+  role            String    @default("member") // member, admin
+  notifyAll       Boolean   @default(true)
+  
+  // Relations
+  channel         Channel   @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@unique([channelId, userId])
+  @@index([channelId])
+}
+
+// Sticker Pack
+model StickerPack {
+  id              String    @id @default(cuid())
+  name            String
+  author          String
+  description     String?
+  thumbnail       String
+  isAnimated      Boolean   @default(false)
+  isCustom        Boolean   @default(false)
+  createdAt       DateTime  @default(now())
+  
+  // Relations
+  stickers        Sticker[]
+  favoritedBy     User[]    @relation("UserFavoriteStickerPacks")
+  
+  @@index([isCustom])
+}
+
+// Sticker
+model Sticker {
+  id              String    @id @default(cuid())
+  packId          String
+  fileUrl         String
+  emojis          String[]  @default([])
+  order           Int
+  createdAt       DateTime  @default(now())
+  
+  // Relations
+  pack            StickerPack @relation(fields: [packId], references: [id], onDelete: Cascade)
+  
+  @@index([packId])
+}
+
+// Premium Subscription
+model PremiumSubscription {
+  id              String    @id @default(cuid())
+  userId          String    @unique
+  plan            String    @default("basic") // basic, pro, premium
+  status          String    @default("active") // active, expired, cancelled
+  stripeId        String?
+  currentPeriodStart DateTime
+  currentPeriodEnd DateTime
+  cancelAtPeriodEnd Boolean @default(false)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  // Relations
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  features        PremiumFeature[]
+  payments        Payment[]
+}
+
+// Premium Features
+model PremiumFeature {
+  id              String    @id @default(cuid())
+  subscriptionId  String
+  feature         String    // exclusive_reactions, animated_avatar, custom_themes, etc
+  enabled         Boolean   @default(true)
+  
+  // Relations
+  subscription    PremiumSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  
+  @@unique([subscriptionId, feature])
+}
+
+// Payment
+model Payment {
+  id              String    @id @default(cuid())
+  subscriptionId  String
+  amount          Float
+  currency        String    @default("USD")
+  status          String    @default("pending") // pending, completed, failed, refunded
+  stripeId        String?
+  method          String    // card, paypal, bank_transfer
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  // Relations
+  subscription    PremiumSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+}
+
+// Device Token for Push Notifications
+model DeviceToken {
+  id              String    @id @default(cuid())
+  userId          String
+  token           String    @unique
+  platform        String    // web, ios, android
+  userAgent       String?
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  // Relations
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+}
+
+// Notification Settings
+model NotificationSettings {
+  id              String    @id @default(cuid())
+  userId          String    @unique
+  pushEnabled     Boolean   @default(true)
+  soundEnabled    Boolean   @default(true)
+  vibrationEnabled Boolean @default(true)
+  showPreview     Boolean   @default(true)
+  quietHours      Boolean   @default(false)
+  quietHoursStart String?   // HH:MM format
+  quietHoursEnd   String?   // HH:MM format
+  mutedChats      String[]  @default([]) // Array of chat IDs
+  updatedAt       DateTime  @updatedAt
+  
+  // Relations
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// Theme
+model Theme {
+  id              String    @id @default(cuid())
+  name            String
+  author          String
+  description     String?
+  isPremium       Boolean   @default(false)
+  colors          Json      // { primary, secondary, background, text, etc }
+  createdAt       DateTime  @default(now())
+  
+  @@index([isPremium])
+}
+
+// Session
+model Session {
+  id              String    @id @default(cuid())
+  userId          String
+  token           String    @unique
+  refreshToken    String    @unique
+  expiresAt       DateTime
+  userAgent       String?
+  ipAddress       String?
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  @@index([userId])
+}
+
+// Audit Log
+model AuditLog {
+  id              String    @id @default(cuid())
+  userId          String?
+  action          String
+  resource        String
+  resourceId      String
+  changes         Json?
+  ipAddress       String?
+  userAgent       String?
+  createdAt       DateTime  @default(now())
+  
+  @@index([userId, createdAt])
+}
